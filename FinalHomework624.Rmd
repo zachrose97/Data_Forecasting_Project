@@ -1,0 +1,223 @@
+---
+title: "Final Homework"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, message = FALSE, warning = FALSE)
+library(ipred)
+library(caret)
+library(AppliedPredictiveModeling)
+library(party)
+library(mlbench)
+library(rpart)
+library(ggplot2)
+library(rpart.plot)
+library(randomForest)
+library(gbm)
+library(Cubist)
+library(partykit)
+```
+
+```{r}
+install.packages("partykit")
+```
+
+Question 8.2:
+
+```{r}
+# Load necessary libraries
+library(partykit)
+
+# Set seed for reproducibility
+set.seed(42)
+
+# Generate synthetic data
+V1 <- runif(1000, 1, 1000)
+V2 <- runif(1000, 20, 500)
+V3 <- rnorm(1000, 100, 15)
+y <- 0.3 * V1 + 0.7 * V2 + rnorm(1000, 0, 20)
+
+# Create a data frame
+df <- data.frame(V1, V2, V3, y)
+
+# Train the cforest model using cforest_control
+cforest_model <- cforest(y ~ ., data = df, control = cforest_unbiased(ntree = 100))
+
+# Calculate variable importance
+var_importance <- varimp(cforest_model, conditional = FALSE)
+
+# Display variable importance
+print(var_importance)
+
+# Plot variable importance
+barplot(var_importance, main = "Variable Importance (Unconditional)", col = "skyblue", las = 2, horiz = TRUE, cex.names = 0.8)
+
+```
+
+The tests above indicate that the response variable y is mainly influenced by V2 and V1, with V2 having the most significant impact.
+It also highlights that V3 does not contribute meaningfully to y, which aligns with the way the response variable was generated.
+
+![](images/fig8.24.png)
+
+Question 8.3: (a) Why does the model on the right focus its importance on just the first few predictors, whereas the model on the left spreads importance across more predictors?
+
+The model on the right has both the bagging fraction and learning rate set to high values (0.9). This means it uses a majority of the data and learns at a much quicker rate, creating strong decisions early on. As a result, it quickly pinpoints a few key predictors and focuses heavily on them to make assesements.
+
+Comparatively the model on the left has both parameters set to low values (0.1). This results in the use of less data and a slower pace of learning, so it considers a broader range of predictors as important. This creates a more even distribution of importance across many predictors.
+
+(b) Which model do you think would be more predictive of other samples? Explanation:
+
+The left model, as a lower bagging fraction and learning rate it is likely to be more predictive of new samples. It takes in a wider range of predictors, which assists in the models ability to generalize new data. The model on the right may narrow in on too few predictors, making it more prone to over fitting and less capable of handling new, unseen data well.
+
+(c) How would increasing interaction depth affect the slope of predictor importance for either model in Fig. 8.24? Explanation:
+
+Increasing the interaction depth would allow the model to capture more complex relationships between predictors. For both models, this would likely cause the importance scores to become more spread out. In the left model, it would enhance the spread even further, while in the right model, it could potentially reduce the focus on the top few predictors by recognizing more nuanced interactions among a larger set of predictors.
+
+Question 8.7:
+
+(a) Which tree-based regression model gives the optimal resampling and test set performance? From the results of the resampling summary, it seems that the random forest (rf) model performs the best based on the following metrics:
+
+```{r}
+data("ChemicalManufacturingProcess")
+
+impute_model <- preProcess(ChemicalManufacturingProcess, method = "bagImpute")
+pharm_data <- predict(impute_model, ChemicalManufacturingProcess)
+
+pharm_data <- pharm_data[, -nearZeroVar(pharm_data)]
+
+set.seed(5678)
+train_indices <- createDataPartition(pharm_data$Yield, p = .8, list = FALSE)
+train_features <- pharm_data[train_indices, -1]
+train_target <- pharm_data[train_indices, 1]
+test_features <- pharm_data[-train_indices, -1]
+test_target <- pharm_data[-train_indices, 1]
+```
+
+CART Model
+```{r}
+set.seed(12)
+cart_model <- train(train_features, train_target, method = "rpart", tuneLength = 10, trControl = trainControl(method = "cv"))
+cart_predictions <- predict(cart_model, test_features)
+cart_performance <- postResample(cart_predictions, test_target)
+```
+Bagged Trees
+```{r}
+set.seed(12)
+bagged_model <- ipredbagg(train_target, train_features)
+bagged_predictions <- predict(bagged_model, test_features)
+bagged_performance <- postResample(bagged_predictions, test_target)
+```
+Random Forest
+```{r}
+set.seed(12)
+rf_model <- randomForest(train_features, train_target, importance = TRUE, ntree = 1000)
+rf_predictions <- predict(rf_model, test_features)
+rf_performance <- postResample(rf_predictions, test_target)
+```
+Boosted Trees
+
+```{r}
+gbm_grid <- expand.grid(interaction.depth = c(1, 3, 5), 
+                        n.trees = c(100, 300, 500), 
+                        shrinkage = c(0.01, 0.1), 
+                        n.minobsinnode = 10)
+
+# Reduce the number of cross-validation folds
+set.seed(12)
+gbm_model <- train(train_features, train_target, method = "gbm", tuneGrid = gbm_grid, verbose = FALSE, trControl = trainControl(method = "cv", number = 3))
+gbm_predictions <- predict(gbm_model, test_features)
+gbm_performance <- postResample(gbm_predictions, test_target)
+```
+
+Cubist
+```{r}
+set.seed(12)
+cubist_model <- train(train_features, train_target, method = "cubist")
+cubist_predictions <- predict(cubist_model, test_features)
+cubist_performance <- postResample(cubist_predictions, test_target)
+```
+Performance
+
+```{r}
+model_performance <- data.frame(
+  Model = c("CART", "Bagged Trees", "Random Forest", "Boosted Trees", "Cubist"),
+  RMSE = c(cart_performance["RMSE"], bagged_performance["RMSE"], rf_performance["RMSE"], gbm_performance["RMSE"], cubist_performance["RMSE"]),
+  Rsquared = c(cart_performance["Rsquared"], bagged_performance["Rsquared"], rf_performance["Rsquared"], gbm_performance["Rsquared"], cubist_performance["Rsquared"]),
+  MAE = c(cart_performance["MAE"], bagged_performance["MAE"], rf_performance["MAE"], gbm_performance["MAE"], cubist_performance["MAE"])
+)
+
+print(model_performance)
+```
+
+The Cubist model appears to be the best fitted to give optimal resampling and test set performance due to having the second lowest RMSE and the lowest MAE value. The Bagged tree models could also be a viable option as it has the lowest RMSE and second lowest MAE values. 
+
+(b) Which predictors are most important in the optimal tree-based regression model? Do either the biological or process variables dominate the list? Extract Variable Importance from the Optimal Model:
+
+```{r}
+cubist_importance <- varImp(cubist_model, scale = FALSE)
+print(cubist_importance)
+```
+
+```{r}
+plot(cubist_importance, top = 20, main = "Top 20 Important Variables - Cubist Model")
+```
+It can be seen above that ManufacturingProcess32, ManufacturingProcess17, and ManufacturingProcess09 are the most significant. Manufacturing processees make up a majority of the most important predcitors, as they are 8 of the top 10, and overall make up 13 of the top 20. 
+
+```{r}
+set.seed(1234)
+linear_model <- train(train_features, train_target, method = "lm")
+linear_importance <- varImp(linear_model, scale = FALSE)
+
+set.seed(1234)
+nonlinear_model <- train(train_features, train_target, method = "nnet", linout = TRUE, trace = FALSE)
+nonlinear_importance <- varImp(nonlinear_model, scale = FALSE)
+
+top10_cubist <- head(cubist_importance$importance[order(-cubist_importance$importance$Overall), , drop = FALSE], 10)
+top10_linear <- head(linear_importance$importance[order(-linear_importance$importance$Overall), , drop = FALSE], 10)
+top10_nonlinear <- head(nonlinear_importance$importance[order(-nonlinear_importance$importance$Overall), , drop = FALSE], 10)
+
+print("Top 10 Predictors - Cubist Model:")
+print(top10_cubist)
+print("Top 10 Predictors - Linear Model:")
+print(top10_linear)
+print("Top 10 Predictors - Nonlinear Model:")
+print(top10_nonlinear)
+```
+
+```{r}
+count_variable_type <- function(variable_names) {
+  bio_count <- sum(grepl("Biological", variable_names))
+  proc_count <- sum(grepl("Manufacturing", variable_names))
+  return(list(Biological = bio_count, Process = proc_count))
+}
+
+cubist_variable_counts <- count_variable_type(rownames(top10_cubist))
+print("Cubist Model - Variable Counts:")
+print(cubist_variable_counts)
+
+linear_variable_counts <- count_variable_type(rownames(top10_linear))
+print("Linear Model - Variable Counts:")
+print(linear_variable_counts)
+
+nonlinear_variable_counts <- count_variable_type(rownames(top10_nonlinear))
+print("Nonlinear Model - Variable Counts:")
+print(nonlinear_variable_counts)
+```
+The tests above further solidify that ManufacturingProcesses are the dominate factor. Specifically, ManufacturingProcess32 appears to be the most significant as shown in 2 out of the 3 models tested.  
+
+
+(c) Plot the optimal single tree with the distribution of yield in the terminal nodes. Does this view of the data provide additional knowledge about the biological or process predictors and their relationship with yield? To visualize a single decision tree, we will use the rpart model because it is easier to interpret individual trees.
+
+The view provided by this rpart model does indeed offer additional insights into the predictors and their relationship with the yield. As expected, this model confirms that ManufacturingProcess32 is the most significant predictor. However, it also highlights the importance of ManufacturingProcess06 and BiologicalMaterial12. Overall, this model provides greater clarity on how various other variables contribute to the overall manufacturing process.
+```{r}
+set.seed(5678)
+index <- createDataPartition(pharm_data$Yield, p = .8, list = FALSE)
+train_data <- pharm_data[index, ]
+test_data <- pharm_data[-index, ]
+
+set.seed(1234)
+rpartTree <- rpart(Yield ~ ., data = train_data)
+plot(as.party(rpartTree), ip_args = list(abbreviate = 4), gp = gpar(fontsize = 7))
+```
+
